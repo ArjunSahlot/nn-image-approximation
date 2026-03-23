@@ -1,0 +1,20 @@
+[project]
+name = "cobalt-shuttle"
+version = "0.1.0"
+description = "Neural network image approximation playground"
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "pillow>=11",
+    "websockets>=14",
+    "torch>=2.6",
+    "torchvision>=0.21",
+    "numpy>=2",
+    "python-multipart>=0.0.22",
+]
+
+[tool.uv]
+index-url = "https://pypi.org/simple/"
+extra-index-url = ["https://download.pytorch.org/whl/cu130"]
