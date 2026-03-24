@@ -18,6 +18,9 @@ const APP = {
         { value: 1, color: '#ffffff' },
     ],
     lossHistory: [],
+    vizHistory: [],
+    timelineIndex: 0,
+    isPlayingTimeline: false,
 };
 
 // Color gradient presets
@@ -116,6 +119,11 @@ const DOM = {
     stopList: $('#stop-list'),
     statusBadge: $('#status-badge'),
     deviceBadge: $('#device-badge'),
+    timelineContainer: $('#timeline-container'),
+    timelineSlider: $('#timeline-slider'),
+    timelineChart: $('#timeline-chart'),
+    timelinePlayBtn: $('#timeline-play-btn'),
+    timelineInfo: $('#timeline-info'),
 };
 
 // ─── Init ───────────────────────────────────────────────────────────────────
@@ -171,6 +179,15 @@ function initEventListeners() {
             }
         });
     });
+
+    // Timeline controls
+    DOM.timelineSlider.addEventListener('input', (e) => {
+        APP.timelineIndex = parseInt(e.target.value);
+        updateTimelineDisplay();
+    });
+
+    DOM.timelinePlayBtn.addEventListener('click', toggleTimelinePlayback);
+    DOM.timelineChart.addEventListener('click', handleTimelineChartClick);
 }
 
 // ─── WebSocket ──────────────────────────────────────────────────────────────
@@ -186,11 +203,24 @@ function initWebSocket() {
             DOM.statEpoch.textContent = data.epoch;
             DOM.statLoss.textContent = data.loss.toExponential(4);
             APP.lossHistory.push(data.loss);
-            drawLossChart();
 
             if (data.image) {
+                // Store visualization history
+                APP.vizHistory.push({
+                    epoch: data.epoch,
+                    loss: data.loss,
+                    image: data.image,
+                });
+
+                // Draw current output
                 drawBase64OnCanvas(DOM.canvasOutput, data.image, 'L');
+
+                // Update timeline
+                updateTimelineSlider();
+                drawTimelineChart();
             }
+
+            drawLossChart();
         }
 
         if (data.type === 'train_done') {
@@ -198,9 +228,20 @@ function initWebSocket() {
             updateTrainingUI();
             DOM.statEpoch.textContent = data.epoch;
             DOM.statLoss.textContent = data.loss.toExponential(4);
+
             if (data.image) {
+                // Store final visualization
+                APP.vizHistory.push({
+                    epoch: data.epoch,
+                    loss: data.loss,
+                    image: data.image,
+                });
+
                 drawBase64OnCanvas(DOM.canvasOutput, data.image, 'L');
+                updateTimelineSlider();
+                drawTimelineChart();
             }
+
             toast('Training complete!', 'success');
         }
     };
@@ -253,6 +294,8 @@ function renderLayers() {
     APP.layers.forEach((layer, idx) => {
         const card = document.createElement('div');
         card.className = 'layer-card';
+        card.draggable = true;
+        card.dataset.layerId = layer.id;
 
         const paramDefs = LAYER_PARAMS[layer.type] || [];
         let paramsHTML = '';
@@ -262,31 +305,115 @@ function renderLayers() {
                 <div class="param-label">
                     ${pd.label}
                     <input type="number" value="${layer.params[pd.key]}" step="${step}"
-                        data-layer-id="${layer.id}" data-param-key="${pd.key}"
-                        onchange="updateLayerParam(${layer.id}, '${pd.key}', this.value)">
+                        data-layer-id="${layer.id}" data-param-key="${pd.key}" class="param-input">
                 </div>
             `;
         });
 
         card.innerHTML = `
+            <div class="layer-drag-handle">
+                <span class="material-symbols-outlined">drag_handle</span>
+            </div>
             <span class="layer-index">${idx + 1}</span>
             <span class="layer-type">${layer.type}</span>
             <div class="layer-params">${paramsHTML}</div>
             <div class="layer-actions">
-                <button class="move-btn" title="Move up" onclick="moveLayer(${layer.id}, -1)">
+                <button class="move-btn up-btn" data-layer-id="${layer.id}" title="Move up">
                     <span class="material-symbols-outlined">keyboard_arrow_up</span>
                 </button>
-                <button class="move-btn" title="Move down" onclick="moveLayer(${layer.id}, 1)">
+                <button class="move-btn down-btn" data-layer-id="${layer.id}" title="Move down">
                     <span class="material-symbols-outlined">keyboard_arrow_down</span>
                 </button>
-                <button title="Remove" onclick="removeLayer(${layer.id})">
+                <button class="delete-btn" data-layer-id="${layer.id}" title="Remove">
                     <span class="material-symbols-outlined">close</span>
                 </button>
             </div>
         `;
 
+        // Attach event listeners
+        const upBtn = card.querySelector('.up-btn');
+        const downBtn = card.querySelector('.down-btn');
+        const deleteBtn = card.querySelector('.delete-btn');
+        const paramInputs = card.querySelectorAll('.param-input');
+
+        upBtn.addEventListener('click', () => moveLayer(layer.id, -1));
+        downBtn.addEventListener('click', () => moveLayer(layer.id, 1));
+        deleteBtn.addEventListener('click', () => removeLayer(layer.id));
+
+        paramInputs.forEach((input) => {
+            input.addEventListener('change', (e) => {
+                const layerId = parseInt(e.target.dataset.layerId);
+                const paramKey = e.target.dataset.paramKey;
+                const value = parseFloat(e.target.value);
+                updateLayerParam(layerId, paramKey, value);
+            });
+        });
+
+        // Drag events
+        card.addEventListener('dragstart', handleLayerDragStart);
+        card.addEventListener('dragover', handleLayerDragOver);
+        card.addEventListener('drop', handleLayerDrop);
+        card.addEventListener('dragend', handleLayerDragEnd);
+        card.addEventListener('dragleave', handleLayerDragLeave);
+
         DOM.layerList.appendChild(card);
     });
+}
+
+let draggedElement = null;
+
+function handleLayerDragStart(e) {
+    draggedElement = this;
+    this.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/html', this.innerHTML);
+}
+
+function handleLayerDragOver(e) {
+    if (e.preventDefault) {
+        e.preventDefault();
+    }
+    e.dataTransfer.dropEffect = 'move';
+
+    if (this !== draggedElement && this.classList.contains('layer-card')) {
+        this.classList.add('drag-over');
+    }
+    return false;
+}
+
+function handleLayerDrop(e) {
+    if (e.stopPropagation) {
+        e.stopPropagation();
+    }
+
+    if (this !== draggedElement && draggedElement) {
+        // Swap the layers
+        const draggedId = parseInt(draggedElement.dataset.layerId);
+        const targetId = parseInt(this.dataset.layerId);
+
+        const draggedIdx = APP.layers.findIndex((l) => l.id === draggedId);
+        const targetIdx = APP.layers.findIndex((l) => l.id === targetId);
+
+        if (draggedIdx !== -1 && targetIdx !== -1) {
+            [APP.layers[draggedIdx], APP.layers[targetIdx]] = [APP.layers[targetIdx], APP.layers[draggedIdx]];
+            renderLayers();
+        }
+    }
+
+    return false;
+}
+
+function handleLayerDragEnd(e) {
+    this.classList.remove('dragging');
+    $$('.layer-card').forEach((card) => {
+        card.classList.remove('drag-over');
+    });
+}
+
+function handleLayerDragLeave(e) {
+    if (e.target === this) {
+        this.classList.remove('drag-over');
+    }
 }
 
 // Make functions global for inline handlers
@@ -377,6 +504,12 @@ async function uploadFile(file) {
 async function startTraining() {
     const config = getTrainConfig();
     APP.lossHistory = [];
+    APP.vizHistory = [];
+    APP.timelineIndex = 0;
+    APP.isPlayingTimeline = false;
+    DOM.timelineContainer.classList.add('hidden');
+    DOM.timelinePlayBtn.classList.remove('playing');
+    DOM.timelinePlayBtn.innerHTML = '<span class="material-symbols-outlined">play_arrow</span>';
 
     try {
         const res = await fetch('/train/start', {
@@ -473,6 +606,129 @@ function drawBase64OnCanvas(canvas, b64, mode) {
 function drawLossChart() {
     // Simple inline sparkline in the stats area
     // We'll just update text for now, could add canvas chart later
+}
+
+// ─── Timeline Management ────────────────────────────────────────────────────
+
+function updateTimelineSlider() {
+    const maxFrames = Math.max(0, APP.vizHistory.length - 1);
+    DOM.timelineSlider.max = maxFrames;
+    DOM.timelineSlider.value = maxFrames;
+    APP.timelineIndex = maxFrames;
+
+    if (APP.vizHistory.length > 0) {
+        DOM.timelineContainer.classList.remove('hidden');
+    }
+}
+
+function drawTimelineChart() {
+    const canvas = DOM.timelineChart;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // Clear canvas
+    ctx.fillStyle = 'rgba(30, 41, 59, 0.6)';
+    ctx.fillRect(0, 0, w, h);
+
+    if (APP.lossHistory.length === 0) return;
+
+    // Draw loss line chart
+    const losses = APP.lossHistory;
+    const minLoss = Math.min(...losses);
+    const maxLoss = Math.max(...losses);
+    const range = maxLoss - minLoss || 1;
+
+    ctx.strokeStyle = 'rgba(99, 102, 241, 0.6)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+
+    losses.forEach((loss, idx) => {
+        const x = (idx / (losses.length - 1 || 1)) * w;
+        const y = h - ((loss - minLoss) / range) * (h - 4) - 2;
+
+        if (idx === 0) {
+            ctx.moveTo(x, y);
+        } else {
+            ctx.lineTo(x, y);
+        }
+    });
+
+    ctx.stroke();
+
+    // Draw playhead
+    if (APP.vizHistory.length > 0) {
+        const playheadX = (APP.timelineIndex / Math.max(1, APP.vizHistory.length - 1)) * w;
+        ctx.strokeStyle = 'rgba(99, 102, 241, 1)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(playheadX, 0);
+        ctx.lineTo(playheadX, h);
+        ctx.stroke();
+    }
+}
+
+function updateTimelineDisplay() {
+    if (APP.vizHistory.length === 0) return;
+
+    const frame = APP.vizHistory[APP.timelineIndex];
+    if (!frame) return;
+
+    // Update the canvas output to show the selected frame
+    drawBase64OnCanvas(DOM.canvasOutput, frame.image, 'L');
+
+    // Update info text
+    DOM.timelineInfo.textContent = `Epoch ${frame.epoch} / ${APP.vizHistory[APP.vizHistory.length - 1]?.epoch || 0}`;
+
+    // Redraw timeline chart with playhead
+    drawTimelineChart();
+}
+
+function handleTimelineChartClick(e) {
+    const canvas = DOM.timelineChart;
+    const rect = canvas.getBoundingClientRect();
+    const canvasRect = canvas.getBoundingClientRect();
+    const x = e.clientX - canvasRect.left;
+    const percent = x / canvasRect.width;
+    const index = Math.round(percent * (APP.vizHistory.length - 1));
+    const clampedIndex = Math.max(0, Math.min(index, APP.vizHistory.length - 1));
+
+    APP.timelineIndex = clampedIndex;
+    DOM.timelineSlider.value = clampedIndex;
+    updateTimelineDisplay();
+}
+
+function toggleTimelinePlayback() {
+    APP.isPlayingTimeline = !APP.isPlayingTimeline;
+
+    if (APP.isPlayingTimeline) {
+        DOM.timelinePlayBtn.classList.add('playing');
+        DOM.timelinePlayBtn.innerHTML = '<span class="material-symbols-outlined">pause</span>';
+        playTimelineSequence();
+    } else {
+        DOM.timelinePlayBtn.classList.remove('playing');
+        DOM.timelinePlayBtn.innerHTML = '<span class="material-symbols-outlined">play_arrow</span>';
+    }
+}
+
+async function playTimelineSequence() {
+    while (APP.isPlayingTimeline && APP.timelineIndex < APP.vizHistory.length - 1) {
+        APP.timelineIndex++;
+        DOM.timelineSlider.value = APP.timelineIndex;
+        updateTimelineDisplay();
+        await new Promise((resolve) => setTimeout(resolve, 200)); // 200ms between frames
+    }
+
+    if (APP.isPlayingTimeline) {
+        // Loop back to start
+        APP.timelineIndex = 0;
+        DOM.timelineSlider.value = 0;
+        updateTimelineDisplay();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        playTimelineSequence();
+    }
 }
 
 // ─── Color Gradient Editor ──────────────────────────────────────────────────

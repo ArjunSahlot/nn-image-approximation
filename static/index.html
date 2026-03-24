@@ -112,6 +112,23 @@
                     <div class="stat"><span class="stat-label">Epoch</span><span id="stat-epoch" class="stat-value">0</span></div>
                     <div class="stat"><span class="stat-label">Loss</span><span id="stat-loss" class="stat-value">-</span></div>
                 </div>
+
+                <!-- Visualization Timeline -->
+                <div id="timeline-container" class="timeline-container hidden">
+                    <div class="timeline-header">
+                        <label class="field-label">Training Progress</label>
+                        <div class="timeline-controls">
+                            <button id="timeline-play-btn" class="btn btn-sm" title="Play animation">
+                                <span class="material-symbols-outlined">play_arrow</span>
+                            </button>
+                            <span id="timeline-info" class="timeline-info">-</span>
+                        </div>
+                    </div>
+                    <div class="timeline-scrubber">
+                        <input type="range" id="timeline-slider" min="0" max="0" value="0" class="timeline-slider">
+                        <canvas id="timeline-chart" class="timeline-chart"></canvas>
+                    </div>
+                </div>
             </div>
 
             <!-- Bottom: Visualization -->
