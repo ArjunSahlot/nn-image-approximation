@@ -75,6 +75,7 @@ class AppState:
         self.total_epochs_done: int = 0
         self.last_loss: float = 0.0
         self.last_output: Optional[np.ndarray] = None
+        self.frame_history: list[dict] = []
         self.ws_clients: list[WebSocket] = []
         self.train_thread: Optional[threading.Thread] = None
         self.lr: float = 0.001
@@ -110,6 +111,7 @@ class ColorStop(BaseModel):
 
 class ColorizeConfig(BaseModel):
     stops: list[ColorStop]
+    epoch: Optional[int] = None
 
 
 # ─── Network Builder ─────────────────────────────────────────────────────────
@@ -215,6 +217,44 @@ def enqueue_message(msg: str):
     msg_queue.put(msg)
 
 
+def record_timeline_frame(epoch: int, loss: float, img: np.ndarray):
+    """Store timeline snapshots so the UI can scrub and export earlier frames."""
+    state.last_output = img
+
+    replaced = False
+    for i, frame in enumerate(state.frame_history):
+        if frame["epoch"] == epoch:
+            state.frame_history[i] = {
+                "epoch": epoch,
+                "loss": float(loss),
+                "image": img,
+            }
+            replaced = True
+            break
+
+    if not replaced:
+        state.frame_history.append({
+            "epoch": epoch,
+            "loss": float(loss),
+            "image": img,
+        })
+
+    max_frames = 2500
+    if len(state.frame_history) > max_frames:
+        state.frame_history = state.frame_history[-max_frames:]
+
+
+def get_output_for_epoch(epoch: Optional[int] = None) -> Optional[np.ndarray]:
+    """Return output for a given epoch or the latest image when no epoch is provided."""
+    if epoch is None:
+        return state.last_output
+
+    for frame in state.frame_history:
+        if frame["epoch"] == epoch:
+            return frame["image"]
+    return None
+
+
 def training_loop(epochs: int, lr: float, batch_size: int, viz_interval: int):
     """Main training loop, runs in a separate thread."""
     state.training = True
@@ -259,7 +299,7 @@ def training_loop(epochs: int, lr: float, batch_size: int, viz_interval: int):
         # Send viz update at interval
         if (epoch + 1) % viz_interval == 0 or epoch == epochs - 1:
             img = generate_output_image(model, coords, state.img_h, state.img_w)
-            state.last_output = img
+            record_timeline_frame(state.current_epoch, avg_loss, img)
             img_b64 = numpy_to_b64png(img)
 
             enqueue_message(json.dumps({
@@ -353,6 +393,7 @@ async def upload_image(file: UploadFile):
     state.total_epochs_done = 0
     state.current_epoch = 0
     state.last_output = None
+    state.frame_history = []
 
     preview_b64 = numpy_to_b64png(gray)
     return {
@@ -374,6 +415,7 @@ async def build_model(config: NetworkConfig):
         state.total_epochs_done = 0
         state.current_epoch = 0
         state.last_output = None
+        state.frame_history = []
         state.optimizer = None
 
         total_params = sum(p.numel() for p in model.parameters())
@@ -405,6 +447,8 @@ async def train_start(config: TrainConfig):
         state.model = model.to(device)
     state.total_epochs_done = 0
     state.current_epoch = 0
+    state.last_output = None
+    state.frame_history = []
 
     # Drain any old messages
     while not msg_queue.empty():
@@ -470,7 +514,8 @@ async def websocket_endpoint(ws: WebSocket):
 @app.post("/colorize")
 async def colorize(config: ColorizeConfig):
     """Apply color gradient to the current output image."""
-    if state.last_output is None:
+    img = get_output_for_epoch(config.epoch)
+    if img is None:
         return {"status": "error", "message": "No output image available. Train first."}
 
     stops = sorted(config.stops, key=lambda s: s.value)
@@ -484,7 +529,6 @@ async def colorize(config: ColorizeConfig):
         r, g, b = int(hx[0:2], 16), int(hx[2:4], 16), int(hx[4:6], 16)
         stop_colors.append([r, g, b])
 
-    img = state.last_output
     h, w = img.shape
     colored = np.zeros((h, w, 3), dtype=np.uint8)
 
@@ -503,9 +547,10 @@ async def colorize(config: ColorizeConfig):
 
 
 @app.get("/export")
-async def export_image(colorized: bool = False, stops: str = ""):
+async def export_image(colorized: bool = False, stops: str = "", epoch: Optional[int] = None):
     """Export the current output as a downloadable PNG."""
-    if state.last_output is None:
+    selected = get_output_for_epoch(epoch)
+    if selected is None:
         return Response(content="No output image", status_code=400)
 
     if colorized and stops:
@@ -518,7 +563,7 @@ async def export_image(colorized: bool = False, stops: str = ""):
             r, g, b = int(hx[0:2], 16), int(hx[2:4], 16), int(hx[4:6], 16)
             stop_colors.append([r, g, b])
 
-        img = state.last_output
+        img = selected
         h, w = img.shape
         colored = np.zeros((h, w, 3), dtype=np.uint8)
         for i in range(3):
@@ -530,7 +575,7 @@ async def export_image(colorized: bool = False, stops: str = ""):
         pil_img = Image.fromarray(colored, mode="RGB")
     else:
         pil_img = Image.fromarray(
-            (state.last_output * 255).astype(np.uint8), mode="L"
+            (selected * 255).astype(np.uint8), mode="L"
         )
 
     buf = io.BytesIO()
@@ -554,6 +599,7 @@ async def get_status():
         "loss": state.last_loss,
         "has_model": state.model is not None,
         "has_image": state.image_gray is not None,
+        "timeline_frames": len(state.frame_history),
         "device": str(device),
         "image_size": (
             f"{state.img_w}x{state.img_h}"

@@ -5,33 +5,36 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>NN Image Playground</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
 </head>
 <body>
-    <!-- Header -->
     <header id="app-header">
         <div class="header-left">
             <span class="material-symbols-outlined logo-icon">neurology</span>
             <h1>NN Image Playground</h1>
         </div>
         <div class="header-right">
+            <button id="btn-theme-toggle" class="btn btn-sm theme-toggle" title="Toggle theme">
+                <span class="material-symbols-outlined">dark_mode</span>
+                <span id="theme-toggle-label">Dark</span>
+            </button>
             <span id="device-badge" class="badge"></span>
             <span id="status-badge" class="badge badge-idle">Idle</span>
         </div>
     </header>
 
     <main id="app-layout">
-        <!-- LEFT: Network Builder -->
         <aside id="panel-network" class="panel">
             <div class="panel-header">
                 <h2><span class="material-symbols-outlined">account_tree</span> Network</h2>
-                <button id="btn-build" class="btn btn-primary btn-sm" title="Build network">
-                    <span class="material-symbols-outlined">build</span> Build
+                <button id="btn-build" class="btn btn-primary btn-sm" title="Compile network">
+                    <span class="material-symbols-outlined">build</span> Compile
                 </button>
             </div>
 
             <div class="panel-section">
+                <p class="panel-note">Drag cards to reorder. Edit values inline. Use duplicate for quick architecture experiments.</p>
                 <label class="field-label">Add Layer</label>
                 <div class="add-layer-row">
                     <select id="layer-type-select">
@@ -54,7 +57,6 @@
             </div>
 
             <div id="layer-list" class="layer-list">
-                <!-- Layers will be added here -->
             </div>
 
             <div id="model-info" class="model-info hidden">
@@ -62,16 +64,13 @@
             </div>
         </aside>
 
-        <!-- CENTER -->
         <section id="panel-center">
-            <!-- Top: Image & Hyperparams -->
             <div id="panel-controls" class="panel">
                 <div class="panel-header">
                     <h2><span class="material-symbols-outlined">tune</span> Controls</h2>
                 </div>
 
                 <div class="controls-grid">
-                    <!-- Image Upload -->
                     <div class="control-group">
                         <label class="field-label">Image</label>
                         <div id="drop-zone" class="drop-zone">
@@ -81,7 +80,6 @@
                         </div>
                     </div>
 
-                    <!-- Hyperparams -->
                     <div class="control-group">
                         <label class="field-label">Learning Rate</label>
                         <input type="number" id="input-lr" value="0.001" step="0.0001" min="0.00001" max="1">
@@ -99,22 +97,44 @@
                         <input type="number" id="input-viz" value="10" step="1" min="1">
                     </div>
 
-                    <!-- Training buttons -->
                     <div class="control-group control-buttons">
                         <button id="btn-start" class="btn btn-success"><span class="material-symbols-outlined">play_arrow</span> Start</button>
                         <button id="btn-stop" class="btn btn-danger" disabled><span class="material-symbols-outlined">stop</span> Stop</button>
                         <button id="btn-resume" class="btn btn-accent" disabled><span class="material-symbols-outlined">fast_forward</span> Resume</button>
                     </div>
+
+                    <div class="control-group train-presets-row">
+                        <label class="field-label">Quick Settings</label>
+                        <div class="train-presets">
+                            <button class="btn btn-sm train-preset-btn" data-train-preset="fast">Fast Iterate</button>
+                            <button class="btn btn-sm train-preset-btn" data-train-preset="balanced">Balanced</button>
+                            <button class="btn btn-sm train-preset-btn" data-train-preset="quality">Best Quality</button>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Training stats -->
                 <div id="train-stats" class="train-stats hidden">
                     <div class="stat"><span class="stat-label">Epoch</span><span id="stat-epoch" class="stat-value">0</span></div>
                     <div class="stat"><span class="stat-label">Loss</span><span id="stat-loss" class="stat-value">-</span></div>
                 </div>
+
+                <div id="timeline-panel" class="timeline-panel hidden">
+                    <div class="timeline-header">
+                        <span class="field-label no-margin">Timeline</span>
+                        <span id="timeline-caption" class="timeline-caption">No frames yet</span>
+                    </div>
+                    <div class="timeline-controls">
+                        <input id="timeline-scrubber" type="range" min="0" max="0" value="0" step="1" disabled>
+                        <button id="btn-jump-latest" class="btn btn-sm" disabled>
+                            <span class="material-symbols-outlined">skip_next</span> Latest
+                        </button>
+                        <button id="btn-save-frame" class="btn btn-sm btn-primary" disabled>
+                            <span class="material-symbols-outlined">download</span> Save Frame
+                        </button>
+                    </div>
+                </div>
             </div>
 
-            <!-- Bottom: Visualization -->
             <div id="panel-viz" class="panel">
                 <div class="panel-header">
                     <h2><span class="material-symbols-outlined">visibility</span> Visualization</h2>
@@ -122,17 +142,20 @@
                 <div class="viz-container">
                     <div class="viz-item">
                         <span class="viz-label">Original (Grayscale)</span>
-                        <canvas id="canvas-original" width="256" height="256"></canvas>
+                        <div class="canvas-shell">
+                            <canvas id="canvas-original" width="256" height="256"></canvas>
+                        </div>
                     </div>
                     <div class="viz-item">
                         <span class="viz-label">Network Output</span>
-                        <canvas id="canvas-output" width="256" height="256"></canvas>
+                        <div class="canvas-shell">
+                            <canvas id="canvas-output" width="256" height="256"></canvas>
+                        </div>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- RIGHT: Color Gradient Editor -->
         <aside id="panel-gradient" class="panel">
             <div class="panel-header">
                 <h2><span class="material-symbols-outlined">palette</span> Color Map</h2>
@@ -140,7 +163,11 @@
 
             <div class="panel-section">
                 <label class="field-label">Gradient Preview</label>
-                <canvas id="gradient-preview" width="280" height="30"></canvas>
+                <div class="gradient-editor">
+                    <canvas id="gradient-preview" width="280" height="30"></canvas>
+                    <div id="gradient-markers" class="gradient-markers"></div>
+                </div>
+                <p class="panel-note gradient-note">Click on the gradient bar to add a stop, then refine values below.</p>
             </div>
 
             <div class="panel-section">
@@ -151,7 +178,6 @@
                     </button>
                 </label>
                 <div id="stop-list" class="stop-list">
-                    <!-- Color stops here -->
                 </div>
             </div>
 
@@ -172,10 +198,11 @@
                 <button id="btn-save" class="btn btn-success"><span class="material-symbols-outlined">download</span> Save</button>
             </div>
 
-            <!-- Colorized preview -->
             <div class="panel-section">
                 <label class="field-label">Colorized Preview</label>
-                <canvas id="canvas-colorized" width="256" height="256"></canvas>
+                <div class="canvas-shell canvas-shell-small">
+                    <canvas id="canvas-colorized" width="256" height="256"></canvas>
+                </div>
             </div>
         </aside>
     </main>
