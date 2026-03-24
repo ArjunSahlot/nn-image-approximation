@@ -231,6 +231,7 @@ function initWebSocket() {
 
             if (data.image) {
                 // Store final visualization
+                APP.lossHistory.push(data.loss);
                 APP.vizHistory.push({
                     epoch: data.epoch,
                     loss: data.loss,
@@ -294,7 +295,6 @@ function renderLayers() {
     APP.layers.forEach((layer, idx) => {
         const card = document.createElement('div');
         card.className = 'layer-card';
-        card.draggable = true;
         card.dataset.layerId = layer.id;
 
         const paramDefs = LAYER_PARAMS[layer.type] || [];
@@ -349,7 +349,14 @@ function renderLayers() {
             });
         });
 
-        // Drag events
+        // Drag events — only allow drag to start from the drag handle
+        const dragHandle = card.querySelector('.layer-drag-handle');
+        dragHandle.addEventListener('mousedown', () => {
+            card.draggable = true;
+        });
+        dragHandle.addEventListener('mouseup', () => {
+            card.draggable = false;
+        });
         card.addEventListener('dragstart', handleLayerDragStart);
         card.addEventListener('dragover', handleLayerDragOver);
         card.addEventListener('drop', handleLayerDrop);
@@ -405,20 +412,18 @@ function handleLayerDrop(e) {
 
 function handleLayerDragEnd(e) {
     this.classList.remove('dragging');
+    this.draggable = false;
+    draggedElement = null;
     $$('.layer-card').forEach((card) => {
         card.classList.remove('drag-over');
     });
 }
 
 function handleLayerDragLeave(e) {
-    if (e.target === this) {
-        this.classList.remove('drag-over');
-    }
+    (e.currentTarget || this).classList.remove('drag-over');
 }
 
-// Make functions global for inline handlers
-window.removeLayer = removeLayer;
-window.moveLayer = moveLayer;
+// Make functions global for inline handlers (gradient stop handlers)
 window.updateLayerParam = (id, key, value) => {
     const layer = APP.layers.find((l) => l.id === id);
     if (layer) {
@@ -626,10 +631,31 @@ function drawTimelineChart() {
     if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
-    const w = canvas.width;
-    const h = canvas.height;
 
-    // Clear canvas
+    // Ensure canvas backing store matches CSS size and device pixel ratio
+    const cssRect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    const displayWidth = cssRect.width;
+    const displayHeight = cssRect.height;
+    const targetWidth = Math.max(1, Math.floor(displayWidth * dpr));
+    const targetHeight = Math.max(1, Math.floor(displayHeight * dpr));
+
+    if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+    }
+
+    // Reset transform and clear full backing store
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw using CSS pixel coordinates, scaled for HiDPI
+    ctx.scale(dpr, dpr);
+
+    const w = displayWidth;
+    const h = displayHeight;
+
+    // Clear canvas background in CSS coordinates
     ctx.fillStyle = 'rgba(30, 41, 59, 0.6)';
     ctx.fillRect(0, 0, w, h);
 
@@ -680,7 +706,7 @@ function updateTimelineDisplay() {
     drawBase64OnCanvas(DOM.canvasOutput, frame.image, 'L');
 
     // Update info text
-    DOM.timelineInfo.textContent = `Epoch ${frame.epoch} / ${APP.vizHistory[APP.vizHistory.length - 1]?.epoch || 0}`;
+    DOM.timelineInfo.textContent = `Epoch ${frame.epoch} / ${APP.vizHistory[APP.vizHistory.length - 1]?.epoch || 0} — Loss ${frame.loss?.toExponential(4) ?? 'N/A'}`;
 
     // Redraw timeline chart with playhead
     drawTimelineChart();
@@ -688,7 +714,6 @@ function updateTimelineDisplay() {
 
 function handleTimelineChartClick(e) {
     const canvas = DOM.timelineChart;
-    const rect = canvas.getBoundingClientRect();
     const canvasRect = canvas.getBoundingClientRect();
     const x = e.clientX - canvasRect.left;
     const percent = x / canvasRect.width;
