@@ -422,7 +422,14 @@ function handleLayerDragEnd(e) {
 }
 
 function handleLayerDragLeave(e) {
-    (e.currentTarget || this).classList.remove('drag-over');
+    const card = e.currentTarget || this;
+    const related = e.relatedTarget;
+
+    // Only clear the hover state if the drag actually leaves this card,
+    // not when moving between its child elements.
+    if (!related || !card.contains(related)) {
+        card.classList.remove('drag-over');
+    }
 }
 
 // Make functions global for inline handlers (gradient stop handlers)
