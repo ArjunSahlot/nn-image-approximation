@@ -353,9 +353,11 @@ function renderLayers() {
         const dragHandle = card.querySelector('.layer-drag-handle');
         dragHandle.addEventListener('mousedown', () => {
             card.draggable = true;
-        });
-        dragHandle.addEventListener('mouseup', () => {
-            card.draggable = false;
+            const onMouseUp = () => {
+                card.draggable = false;
+                document.removeEventListener('mouseup', onMouseUp);
+            };
+            document.addEventListener('mouseup', onMouseUp);
         });
         card.addEventListener('dragstart', handleLayerDragStart);
         card.addEventListener('dragover', handleLayerDragOver);
